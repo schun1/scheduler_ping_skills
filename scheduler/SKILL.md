@@ -10,15 +10,14 @@ Create, list, edit, and delete scheduled tasks that run automatically on the ser
 - User asks about task status or history
 
 ## API Base URL
-`https://<VERCEL_APP_URL>`
-
-Replace <VERCEL_APP_URL> with the deployed app URL.
+`https://scheduler-ping-skills.vercel.app`
 
 ## Guardrails
 
 - **Confirmation on create/delete** — Before creating or deleting a task, show the user exactly what will happen and ask them to confirm before executing.
 - **Minimum interval** — If the user requests a schedule more frequent than once per day, warn them: "Schedules more frequent than once per day are not supported. Would you like to use a daily schedule instead?"
 - **Valid skill names only** — Only accept task types that have a corresponding SKILL.md file in the project. Known skills: `ping`. If the user requests an unknown type, ask them for the skill name, then look for a matching SKILL.md file (e.g. `<skill_name>/SKILL.md`). If the file exists, read its Required Parameters section and proceed. If it does not exist, reject the request and list the available skills.
+- **Report errors honestly** — If an API call fails (network error, non-2xx status, timeout), report the exact error to the user. Never claim a task was created, edited, or deleted unless you received a successful response. Hallucinated successes are worse than reported failures.
 
 ## Methods
 
@@ -89,6 +88,26 @@ The `params` object is merged with the existing params — you only need to send
 2. Delete the task
 3. Confirm deletion
 
+## Structured Output
+
+When executing in automated mode (via Claude API), responses must follow this schema:
+
+```json
+{
+  "action": "create" | "list" | "edit" | "delete",
+  "task_id": "<id, required for edit/delete>",
+  "task": {
+    "type": "<skill_type>",
+    "params": { ... },
+    "schedule": "daily" | "weekly" | "hourly"
+  },
+  "status": "success" | "failed" | "error" | "rejected",
+  "error": "<error message, only if status is failed/error/rejected>"
+}
+```
+
+Reject any response that does not match this schema before acting on it.
+
 ## Example Interactions
 
 **User:** "Schedule a ping to https://webhook.site/abc every day with my name Jane Doe"
@@ -98,7 +117,7 @@ The `params` object is merged with the existing params — you only need to send
 **User:** "What tasks are running?"
 → GET /api/tasks
 → "You have 2 scheduled tasks:
-   1. Ping to webhook.site/abc (daily) — last ran today at 4:30 PM PST, successful
+   1. Ping to webhook.site/abc (daily) — last ran today at 4:00 PM PST, successful
    2. Ping to webhook.site/xyz (daily) — hasn't run yet"
 
 **User:** "Change my name on the daily ping to John Smith"

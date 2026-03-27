@@ -6,25 +6,43 @@ This project implements two Claude Skills -- **Scheduler** and **Ping** -- backe
 
 - **Ping Skill** sends a POST request (with a name and timestamp) to any webhook URL.
 - **Scheduler Skill** creates, lists, edits, and deletes scheduled tasks via a REST API. It delegates execution details to task-type-specific skills (like Ping).
-- **Vercel Backend** provides four API endpoints (`GET /api/tasks`, `POST /api/tasks`, `PUT /api/tasks`, `DELETE /api/tasks`) and a cron handler (`/api/cron`) that runs daily at 10:15 PM UTC (2:15 PM PST) to execute all active tasks.
+- **Vercel Backend** provides four API endpoints (`GET /api/tasks`, `POST /api/tasks`, `PUT /api/tasks`, `DELETE /api/tasks`) and a cron handler (`/api/cron`) that runs daily at 12:00 AM UTC (4:00 PM PST) to execute all active tasks.
 
 ## Vercel URL
 
 ```
-https://<YOUR_VERCEL_URL>
+https://scheduler-ping-skills.vercel.app
 ```
+
+## Setup: Using the Skills in Claude.ai
+
+1. Go to **claude.ai** → **Projects** → **Create project**
+2. Upload `ping/SKILL.md` and `scheduler/SKILL.md` as project knowledge
+3. Greenlight the domains so Claude can make HTTP requests:
+   - Go to `claude.ai/settings/capabilities`
+   - Under "Code execution and file creation", make sure **"Allow network egress"** is enabled
+   - In the **Domain allowlist**, add: `scheduler-ping-skills.vercel.app` and `webhook.site`
+4. Start a conversation in the project and try:
+   - "Ping the webhook at https://webhook.site/your-url with my name Jane Doe"
+   - "Schedule a daily ping to https://webhook.site/your-url with my name Jane Doe"
+   - "What tasks are scheduled?"
+
+For production use, a more secure and non-technical-friendly approach would be an **MCP server** that provides HTTP request capabilities. An MCP server abstracts away domain management, provides built-in authentication, and means non-technical teammates don't need to configure allowed domains — they just use the skills. For the demo, I have simply greenlighted the Vercel URL. 
+
+The **automated mode** (Vercel cron) works independently of either approach — it executes tasks directly without Claude.
 
 ## Design Decisions
 
 **Vercel KV for persistence.** Tasks are stored in Vercel KV rather than in-memory or on the filesystem. This means scheduled tasks survive redeploys, cold starts, and serverless function recycling without any additional infrastructure.
 
-**Seed task for demo reliability.** The cron handler injects a seed task if KV is empty. This guarantees the demo works on first run -- a reviewer can trigger the cron endpoint and see a result immediately without needing to create a task first. This is for fallback of demo ONLY.
 
 **Composable skill architecture.** The Scheduler skill dynamically discovers available skills by looking for `<skill_name>/SKILL.md` files. It doesn't hardcode any skill-specific logic. Adding a new skill type (e.g. HubSpot) means dropping in a new `hubspot/SKILL.md` file and adding a corresponding execution handler in the cron code (`api/cron.js`). The Scheduler skill itself does not change.
 
 **Minimal API surface.** Four endpoints (GET, POST, PUT, DELETE) cover the full CRUD lifecycle for a task scheduler. PUT merges partial updates into existing tasks, so users can change a single parameter without resending the entire task. The goal was *enough* to show the pattern, not a production task queue.
 
-**Fixed daily cron on the free tier.** Vercel's free tier limits cron jobs to once per day. Individual tasks store a `schedule` field (e.g., `"daily"`) in KV for future use, but the actual execution cadence is governed by the single cron entry at `15 22 * * *` (10:15 PM UTC / 2:15 PM PST). A paid tier would allow per-task granularity.
+**Structured outputs for automated execution.** Both skills define a JSON response schema in their Structured Output section. In automated mode (via Claude API), responses are validated against these schemas before being acted on — preventing hallucinated successes or malformed API calls. This makes skill execution deterministic and auditable.
+
+**Fixed daily cron on the free tier.** Vercel's free tier limits cron jobs to once per day. Individual tasks store a `schedule` field (e.g., `"daily"`) in KV for future use, but the actual execution cadence is governed by the single cron entry at `0 0 * * *` (12:00 AM UTC / 4:00 PM PST). A paid tier would allow per-task granularity.
 
 ## Composability
 
@@ -141,3 +159,17 @@ The cron reads the task, sends Claude the HubSpot SKILL.md + Slack SKILL.md + th
 5. **Store execution logs** — Save Claude's responses in KV alongside task results for debugging
 
 The key insight: the SKILL.md files already contain everything Claude needs to execute — required parameters, execution steps, and guardrails. The same instructions that work in Claude.ai conversation would work when fed to the Claude API by the cron. The skill format is the shared contract between interactive and automated modes.
+
+## Known Limitations and Further Improvements - Acknowledged but left out of demo
+
+### Schedule field validation
+
+The `schedule` field is stored but not enforced by the cron executor. The field exists as a forward-compatible placeholder for when Vercel's paid tier enables more granular cron frequencies.
+
+### Claude.ai HTTP execution
+
+The Skills assume Claude has the ability to make HTTP requests. In vanilla Claude.ai, this requires either an MCP server with HTTP tools or enabling network egress with domain greenlisting. The Skills would benefit from explicitly declaring their tool dependency (e.g., "This skill requires an HTTP request tool") so that a user uploading them knows what infrastructure is needed before they hit a wall. 
+
+### Secret management for cross-skill composability
+
+The composability conventions (Required Parameters, statelessness, 1:1 type mapping) don't currently address how skills declare and receive credentials. A HubSpot or Slack skill needs API keys. A `Required Secrets` section in the SKILL.md format — with secrets resolved from environment variables at execution time rather than stored in task params — would complete the cross-skill contract.

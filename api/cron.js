@@ -1,17 +1,23 @@
 import { kv } from "@vercel/kv";
 
-const SEED_TASK = {
-  id: "seed-ping",
-  type: "ping",
-  params: {
-    webhook_url: "https://webhook.site/47cdccd9-78bb-420d-bce2-9f34d05df913",
-    name: "Sydney Chun",
-  },
-  schedule: "daily",
-  status: "active",
-  last_run: null,
-  created_at: "2026-03-27T21:15:00Z",
-};
+function isDue(task) {
+  if (!task.last_run) return true;
+
+  const now = new Date();
+  const lastRun = new Date(task.last_run);
+  const hoursSinceLastRun = (now - lastRun) / (1000 * 60 * 60);
+
+  switch (task.schedule) {
+    case "daily":
+      return hoursSinceLastRun >= 24;
+    case "weekly":
+      return hoursSinceLastRun >= 168;
+    case "hourly":
+      return hoursSinceLastRun >= 1;
+    default:
+      return hoursSinceLastRun >= 24;
+  }
+}
 
 async function executePing(params) {
   const payload = {
@@ -29,24 +35,31 @@ async function executePing(params) {
 }
 
 export default async function handler(req, res) {
-  let tasks = (await kv.get("tasks")) || [];
-
-  // Seed default task if empty
-  if (!tasks.find((t) => t.id === "seed-ping")) {
-    tasks.push(SEED_TASK);
-    await kv.set("tasks", tasks);
+  // Verify cron secret — only Vercel's scheduler or authorized callers
+  const authHeader = req.headers["authorization"];
+  if (process.env.CRON_SECRET && authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+    return res.status(401).json({ error: "Unauthorized" });
   }
+
+  let tasks = (await kv.get("tasks")) || [];
 
   const results = [];
 
   for (const task of tasks) {
     if (task.status !== "active") continue;
+    if (!isDue(task)) continue;
 
     if (task.type === "ping") {
-      const success = await executePing(task.params);
-      task.last_run = new Date().toISOString();
-      task.last_status = success ? "success" : "failed";
-      results.push({ id: task.id, type: task.type, success });
+      try {
+        const success = await executePing(task.params);
+        task.last_run = new Date().toISOString();
+        task.last_status = success ? "success" : "failed";
+        results.push({ id: task.id, type: task.type, success });
+      } catch (error) {
+        task.last_run = new Date().toISOString();
+        task.last_status = "error";
+        results.push({ id: task.id, type: task.type, success: false, error: error.message });
+      }
     }
   }
 

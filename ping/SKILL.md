@@ -37,12 +37,33 @@ Before executing, validate the webhook URL:
 
 If any check fails, do not execute the request. Explain which rule was violated and ask for a corrected URL.
 
+- **Report errors honestly** — If a request fails (network error, non-2xx status, timeout), report the exact error to the user. Never claim a ping succeeded unless you received a successful response. Hallucinated successes are worse than reported failures.
+
 ## Behavior
 1. If the user does not provide a webhook URL, ask for it
 2. If the user does not provide a name, ask for it
 3. Validate the URL against the guardrails above
 4. Execute the POST request
 5. Report success or failure to the user
+
+## Structured Output
+
+When executing in automated mode (via Claude API), responses must follow this schema:
+
+```json
+{
+  "action": "ping",
+  "status": "success" | "failed" | "error" | "rejected",
+  "params": {
+    "webhook_url": "https://...",
+    "name": "..."
+  },
+  "timestamp": "<ISO 8601>",
+  "error": "<error message, only if status is failed/error/rejected>"
+}
+```
+
+Reject any response that does not match this schema before acting on it.
 
 ## Example Interactions
 
