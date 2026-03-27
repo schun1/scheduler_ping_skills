@@ -1,0 +1,6 @@
+node_modules/
+.vercel/
+.env
+.env.local
+SETUP.md
+takehome-director-applied-ai.md
